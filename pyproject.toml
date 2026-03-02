@@ -1,0 +1,20 @@
+[project]
+name = "comfyui-wan-resolutions"
+description = "ComfyUI custom node for selecting WAN resolution presets by aspect ratio."
+authors = [
+    { name = "boobkake22", email = "boobkake22@gmail.com" }
+]
+version = "0.1.0"
+license = { file = "LICENSE" }
+readme = "README.md"
+requires-python = ">=3.10"
+
+[project.urls]
+Repository = "https://github.com/boobkake22/ComfyUI-WanResolutions"
+#  Used by Comfy Registry https://registry.comfy.org
+"Bug Tracker" = "https://github.com/boobkake22/ComfyUI-WanResolutions/issues"
+
+[tool.comfy]
+PublisherId = "boobkake22"
+DisplayName = "Wan Resolutions"
+Icon = ""
