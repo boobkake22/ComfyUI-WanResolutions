@@ -2,11 +2,12 @@ import re
 from typing import Dict, List, Optional, Tuple
 
 
-class WanResolution:
+class WanResolutions:
     """
-    WAN Resolution
+    WanResolutions
     - Choose aspect ratio and quality tier.
     - Optional IMAGE input can auto-select the closest aspect ratio.
+    - Optional round_to_16 can snap output dimensions to multiples of 16.
     - Outputs width,height as INT.
     """
 
@@ -124,6 +125,7 @@ class WanResolution:
             "required": {
                 "aspect_ratio": (aspect_choices, {"default": default_ar}),
                 "resolution": (all_resolution_choices, {"default": default_res}),
+                "round_to_16": ("BOOLEAN", {"default": False}),
             },
             "optional": {
                 "image": ("IMAGE",),
@@ -165,6 +167,63 @@ class WanResolution:
 
         w, h, _ = rows[0]
         return w, h
+
+    @staticmethod
+    def _round_to_multiple(value: float, multiple: int) -> int:
+        if multiple <= 0:
+            return int(round(value))
+        return max(multiple, int(round(float(value) / float(multiple))) * multiple)
+
+    @classmethod
+    def _round_resolution_preserve_aspect(
+        cls,
+        width: int,
+        height: int,
+        multiple: int = 16,
+    ) -> Tuple[int, int]:
+        """
+        Snap dimensions to a required multiple while keeping aspect ratio as close
+        as possible to the requested width/height.
+        """
+        if width <= 0 or height <= 0:
+            return (
+                cls._round_to_multiple(max(1, width), multiple),
+                cls._round_to_multiple(max(1, height), multiple),
+            )
+
+        target_ratio = float(width) / float(height)
+        target_area = width * height
+
+        base_w = cls._round_to_multiple(width, multiple)
+        base_h = cls._round_to_multiple(height, multiple)
+
+        width_candidates = {max(multiple, base_w + (step * multiple)) for step in range(-3, 4)}
+        height_candidates = {max(multiple, base_h + (step * multiple)) for step in range(-3, 4)}
+
+        candidates = set()
+
+        # Generate options by preserving ratio from width and from height.
+        for w in width_candidates:
+            h = cls._round_to_multiple(float(w) / target_ratio, multiple)
+            candidates.add((w, h))
+        for h in height_candidates:
+            w = cls._round_to_multiple(float(h) * target_ratio, multiple)
+            candidates.add((w, h))
+
+        # Add a small local grid around the nearest rounded size.
+        for w in width_candidates:
+            for h in height_candidates:
+                candidates.add((w, h))
+
+        best_w, best_h = min(
+            candidates,
+            key=lambda wh: (
+                abs((float(wh[0]) / float(wh[1])) - target_ratio),
+                abs(wh[0] - width) + abs(wh[1] - height),
+                abs((wh[0] * wh[1]) - target_area),
+            ),
+        )
+        return int(best_w), int(best_h)
 
     @staticmethod
     def _parse_aspect_ratio_value(aspect_ratio: str) -> Optional[float]:
@@ -234,6 +293,7 @@ class WanResolution:
         aspect_ratio: str,
         resolution: str,
         image=None,
+        round_to_16: bool = False,
     ):
         resolved_aspect = aspect_ratio
         image_dims = self._image_dimensions(image)
@@ -242,4 +302,6 @@ class WanResolution:
             resolved_aspect = self._best_aspect_ratio(image_w, image_h)
 
         w, h = self._parse_resolution(resolved_aspect, resolution)
+        if round_to_16:
+            w, h = self._round_resolution_preserve_aspect(w, h, multiple=16)
         return (int(w), int(h))

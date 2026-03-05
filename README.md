@@ -1,4 +1,4 @@
-# ComfyUI Wan Resolutions
+# ComfyUI WanResolutions
 
 ComfyUI custom node that outputs `width` and `height` presets for Wan 2.2 video generation.
 
@@ -7,6 +7,7 @@ ComfyUI custom node that outputs `width` and `height` presets for Wan 2.2 video 
 - Lets you choose an `aspect_ratio` and resolution quality tier
 - Outputs `INT` values: `width`, `height`
 - Optional `IMAGE` input auto-matches the closest supported aspect ratio as an override
+- Optional `round_to_16` snaps output to dimensions divisible by 16 while staying close to the target ratio
 - Keeps equivalent quality tier when you switch aspect ratios in the UI
 
 Supported aspect ratios:
@@ -34,10 +35,11 @@ Restart ComfyUI after installing.
 
 ## Usage
 
-1. Add the `Wan Resolution` node.
+1. Add the `WanResolutions` node.
 2. Pick `aspect_ratio` and `resolution`.
-3. Optional: connect an `IMAGE` input to auto-select the nearest aspect ratio.
-4. Connect `width` and `height` outputs to your downstream nodes.
+3. Optional: enable `round_to_16` for dimensions divisible by 16.
+4. Optional: connect an `IMAGE` input to auto-select the nearest aspect ratio.
+5. Connect `width` and `height` outputs to your downstream nodes.
 
 ## License
 

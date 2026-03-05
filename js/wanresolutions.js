@@ -115,9 +115,9 @@ function tierIndexForValue(aspectRatio, value) {
 }
 
 app.registerExtension({
-  name: "wan_resolution.dynamic_resolution_list",
+  name: "wanresolutions.dynamic_resolution_list",
   async nodeCreated(node) {
-    if (node.comfyClass !== "WanResolution") return;
+    if (node.comfyClass !== "WanResolutions") return;
 
     const aspectWidget = node.widgets?.find((w) => w.name === "aspect_ratio");
     const resWidget = node.widgets?.find((w) => w.name === "resolution");

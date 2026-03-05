@@ -1,11 +1,11 @@
-from .wan_resolution import WanResolution
+from .wanresolutions import WanResolutions
 
 NODE_CLASS_MAPPINGS = {
-    "WanResolution": WanResolution,
+    "WanResolutions": WanResolutions,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "WanResolution": "Wan Resolution",
+    "WanResolutions": "WanResolutions",
 }
 
 # Any .js files in this directory will be loaded by the frontend

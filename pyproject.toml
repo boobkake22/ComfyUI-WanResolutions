@@ -1,6 +1,6 @@
 [project]
-name = "comfyui-wan-resolutions"
-description = "ComfyUI custom node for selecting WAN resolution presets by aspect ratio."
+name = "comfyui-wanresolutions"
+description = "ComfyUI custom node for selecting Wan resolution presets by aspect ratio."
 authors = [
     { name = "boobkake22", email = "boobkake22@gmail.com" }
 ]
@@ -16,5 +16,5 @@ Repository = "https://github.com/boobkake22/ComfyUI-WanResolutions"
 
 [tool.comfy]
 PublisherId = "boobkake22"
-DisplayName = "Wan Resolutions"
+DisplayName = "WanResolutions"
 Icon = ""
