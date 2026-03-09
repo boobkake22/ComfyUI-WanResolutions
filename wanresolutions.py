@@ -2,82 +2,25 @@ import re
 from typing import Dict, List, Optional, Tuple
 
 
-class WanResolutions:
+class AspectResolutionNodeBase:
     """
-    WanResolutions
+    Shared aspect-ratio resolution picker for video models.
     - Choose aspect ratio and quality tier.
-    - Optional IMAGE input can auto-select the closest aspect ratio.
-    - Optional round_to_16 can snap output dimensions to multiples of 16.
+    - Optional IMAGE input can auto-select the closest supported aspect ratio.
     - Outputs width,height as INT.
     """
 
-    CATEGORY = "WAN"
     FUNCTION = "pick"
     RETURN_TYPES = ("INT", "INT")
     RETURN_NAMES = ("width", "height")
+    UI_STATE_KEYS = ("aspect_resolution_state", "wanresolutions_state")
 
     FALLBACK_ASPECT = "1:1"
     ASPECT_ORDER = ("1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9")
-
-    # Presets: (width, height, note)
-    PRESETS: Dict[str, List[Tuple[int, int, str]]] = {
-        "1:1": [
-            (480, 480, "Fast Samples"),
-            (640, 640, "Fast and OK"),
-            (768, 768, "Reasonable"),
-            (800, 800, "Better Details"),
-            (880, 880, "Really Good"),
-            (960, 960, "Wan 2.2 Native"),
-        ],
-        "2:3": [
-            (384, 576, "Fast Samples"),
-            (528, 768, "Fast and OK"),
-            (624, 912, "Reasonable"),
-            (656, 960, "Better Details"),
-            (736, 1072, "Really Good"),
-            (784, 1136, "Wan 2.2 Native"),
-        ],
-        "3:2": [
-            (576, 384, "Fast Samples"),
-            (768, 528, "Fast and OK"),
-            (912, 624, "Reasonable"),
-            (960, 656, "Better Details"),
-            (1072, 736, "Really Good"),
-            (1136, 784, "Wan 2.2 Native"),
-        ],
-        "3:4": [
-            (416, 544, "Fast Samples"),
-            (560, 720, "Fast and OK"),
-            (672, 864, "Reasonable"),
-            (720, 912, "Better Details"),
-            (784, 1008, "Really Good"),
-            (848, 1088, "Wan 2.2 Native"),
-        ],
-        "4:3": [
-            (544, 416, "Fast Samples"),
-            (720, 560, "Fast and OK"),
-            (864, 672, "Reasonable"),
-            (912, 720, "Better Details"),
-            (1008, 784, "Really Good"),
-            (1088, 848, "Wan 2.2 Native"),
-        ],
-        "9:16": [
-            (368, 624, "Fast Samples"),
-            (480, 848, "Fast and OK"),
-            (576, 1008, "Reasonable"),
-            (608, 1072, "Better Details"),
-            (672, 1184, "Really Good"),
-            (720, 1264, "Wan 2.2 Native"),
-        ],
-        "16:9": [
-            (624, 368, "Fast Samples"),
-            (848, 480, "Fast and OK"),
-            (1008, 576, "Reasonable"),
-            (1072, 608, "Better Details"),
-            (1184, 672, "Really Good"),
-            (1264, 720, "Wan 2.2 Native"),
-        ],
-    }
+    ALLOW_ROUND_TO_16 = False
+    ALLOW_IMAGE_BYPASS = False
+    LEGACY_NOTE_ALIASES: Dict[str, str] = {}
+    PRESETS: Dict[str, List[Tuple[int, int, str]]] = {}
 
     @classmethod
     def _rows_for(cls, aspect_ratio: str) -> List[Tuple[int, int, str]]:
@@ -88,11 +31,9 @@ class WanResolutions:
         rows = cls._rows_for(aspect_ratio)
         return [f"{note} — {w}×{h}" for w, h, note in rows]
 
-    @staticmethod
-    def _legacy_note(note: str) -> str:
-        if note == "Wan 2.2 Native":
-            return "(WAN 2.2 native)"
-        return note.lower()
+    @classmethod
+    def _legacy_note(cls, note: str) -> str:
+        return cls.LEGACY_NOTE_ALIASES.get(note, note.lower())
 
     @classmethod
     def _legacy_labels_for(cls, aspect_ratio: str) -> List[str]:
@@ -132,12 +73,17 @@ class WanResolutions:
         all_resolution_choices = cls._all_labels_for_validation()
         default_res = cls._labels_for(default_ar)[0]
 
+        required = {
+            "aspect_ratio": (aspect_choices, {"default": default_ar}),
+            "resolution": (all_resolution_choices, {"default": default_res}),
+        }
+        if cls.ALLOW_ROUND_TO_16:
+            required["round_to_16"] = ("BOOLEAN", {"default": False})
+        if cls.ALLOW_IMAGE_BYPASS:
+            required["image_bypass"] = ("BOOLEAN", {"default": False})
+
         return {
-            "required": {
-                "aspect_ratio": (aspect_choices, {"default": default_ar}),
-                "resolution": (all_resolution_choices, {"default": default_res}),
-                "round_to_16": ("BOOLEAN", {"default": False}),
-            },
+            "required": required,
             "optional": {
                 "image": ("IMAGE",),
             },
@@ -234,7 +180,6 @@ class WanResolutions:
 
         candidates = set()
 
-        # Generate options by preserving ratio from width and from height.
         for w in width_candidates:
             h = cls._round_to_multiple(float(w) / target_ratio, multiple)
             candidates.add((w, h))
@@ -242,7 +187,6 @@ class WanResolutions:
             w = cls._round_to_multiple(float(h) * target_ratio, multiple)
             candidates.add((w, h))
 
-        # Add a small local grid around the nearest rounded size.
         for w in width_candidates:
             for h in height_candidates:
                 candidates.add((w, h))
@@ -291,7 +235,6 @@ class WanResolutions:
         if image is None:
             return None
 
-        # Some graph contexts may wrap input tensors in a single-item list.
         if isinstance(image, (list, tuple)):
             if not image:
                 return None
@@ -326,9 +269,11 @@ class WanResolutions:
         resolution: str,
         image=None,
         round_to_16: bool = False,
+        image_bypass: bool = False,
     ):
         resolved_aspect = aspect_ratio
-        image_dims = self._image_dimensions(image)
+        image_input = None if (self.ALLOW_IMAGE_BYPASS and image_bypass) else image
+        image_dims = self._image_dimensions(image_input)
         image_w = None
         image_h = None
         if image_dims is not None:
@@ -337,23 +282,159 @@ class WanResolutions:
 
         w, h = self._parse_resolution(resolved_aspect, resolution)
         resolved_resolution = self._label_for_dimensions(resolved_aspect, w, h) or resolution
-        if round_to_16:
+        if self.ALLOW_ROUND_TO_16 and round_to_16:
             w, h = self._round_resolution_preserve_aspect(w, h, multiple=16)
 
         result = (int(w), int(h))
         if image_dims is None:
             return result
 
+        state = {
+            "aspect_ratio": resolved_aspect,
+            "resolution": resolved_resolution,
+            "source_width": image_w,
+            "source_height": image_h,
+        }
         return {
-            "ui": {
-                "wanresolutions_state": [
-                    {
-                        "aspect_ratio": resolved_aspect,
-                        "resolution": resolved_resolution,
-                        "source_width": image_w,
-                        "source_height": image_h,
-                    }
-                ]
-            },
+            "ui": {key: [state] for key in self.UI_STATE_KEYS},
             "result": result,
         }
+
+
+class WanResolutions(AspectResolutionNodeBase):
+    """
+    Wan 2.2 resolution presets with optional round-to-16 snapping.
+    """
+
+    CATEGORY = "WAN"
+    ALLOW_ROUND_TO_16 = True
+    LEGACY_NOTE_ALIASES = {"Wan 2.2 Native": "(WAN 2.2 native)"}
+
+    PRESETS: Dict[str, List[Tuple[int, int, str]]] = {
+        "1:1": [
+            (480, 480, "Fast Samples"),
+            (640, 640, "Fast and OK"),
+            (768, 768, "Reasonable"),
+            (800, 800, "Better Details"),
+            (880, 880, "Really Good"),
+            (960, 960, "Wan 2.2 Native"),
+        ],
+        "2:3": [
+            (384, 576, "Fast Samples"),
+            (528, 768, "Fast and OK"),
+            (624, 912, "Reasonable"),
+            (656, 960, "Better Details"),
+            (736, 1072, "Really Good"),
+            (784, 1136, "Wan 2.2 Native"),
+        ],
+        "3:2": [
+            (576, 384, "Fast Samples"),
+            (768, 528, "Fast and OK"),
+            (912, 624, "Reasonable"),
+            (960, 656, "Better Details"),
+            (1072, 736, "Really Good"),
+            (1136, 784, "Wan 2.2 Native"),
+        ],
+        "3:4": [
+            (416, 544, "Fast Samples"),
+            (560, 720, "Fast and OK"),
+            (672, 864, "Reasonable"),
+            (720, 912, "Better Details"),
+            (784, 1008, "Really Good"),
+            (848, 1088, "Wan 2.2 Native"),
+        ],
+        "4:3": [
+            (544, 416, "Fast Samples"),
+            (720, 560, "Fast and OK"),
+            (864, 672, "Reasonable"),
+            (912, 720, "Better Details"),
+            (1008, 784, "Really Good"),
+            (1088, 848, "Wan 2.2 Native"),
+        ],
+        "9:16": [
+            (368, 624, "Fast Samples"),
+            (480, 848, "Fast and OK"),
+            (576, 1008, "Reasonable"),
+            (608, 1072, "Better Details"),
+            (672, 1184, "Really Good"),
+            (720, 1264, "Wan 2.2 Native"),
+        ],
+        "16:9": [
+            (624, 368, "Fast Samples"),
+            (848, 480, "Fast and OK"),
+            (1008, 576, "Reasonable"),
+            (1072, 608, "Better Details"),
+            (1184, 672, "Really Good"),
+            (1264, 720, "Wan 2.2 Native"),
+        ],
+    }
+
+
+class LTXResolutions(AspectResolutionNodeBase):
+    """
+    LTX 2.3 video resolution presets.
+    - Uses dimensions divisible by 32.
+    - Keeps the same aspect-ratio selection workflow as WanResolutions.
+    """
+
+    CATEGORY = "LTX"
+    ALLOW_IMAGE_BYPASS = True
+
+    PRESETS: Dict[str, List[Tuple[int, int, str]]] = {
+        "1:1": [
+            (320, 320, "Stage 1 Preview"),
+            (640, 640, "Fast Iteration"),
+            (768, 768, "Balanced"),
+            (960, 960, "HD Output"),
+            (1184, 1184, "High Detail"),
+            (1440, 1440, "Full HD Output"),
+        ],
+        "2:3": [
+            (256, 384, "Stage 1 Preview"),
+            (512, 768, "Fast Iteration"),
+            (640, 960, "Balanced"),
+            (768, 1152, "HD Output"),
+            (960, 1440, "High Detail"),
+            (1152, 1728, "Full HD Output"),
+        ],
+        "3:2": [
+            (384, 256, "Stage 1 Preview"),
+            (768, 512, "Fast Iteration"),
+            (960, 640, "Balanced"),
+            (1152, 768, "HD Output"),
+            (1440, 960, "High Detail"),
+            (1728, 1152, "Full HD Output"),
+        ],
+        "3:4": [
+            (256, 352, "Stage 1 Preview"),
+            (512, 704, "Fast Iteration"),
+            (640, 864, "Balanced"),
+            (864, 1152, "HD Output"),
+            (1056, 1408, "High Detail"),
+            (1248, 1664, "Full HD Output"),
+        ],
+        "4:3": [
+            (352, 256, "Stage 1 Preview"),
+            (704, 512, "Fast Iteration"),
+            (864, 640, "Balanced"),
+            (1152, 864, "HD Output"),
+            (1408, 1056, "High Detail"),
+            (1664, 1248, "Full HD Output"),
+        ],
+        "9:16": [
+            (288, 512, "Stage 1 Preview"),
+            (576, 1024, "Fast Iteration"),
+            (672, 1184, "Balanced"),
+            (736, 1312, "HD Output"),
+            (864, 1536, "High Detail"),
+            (1056, 1888, "Full HD Output"),
+        ],
+        "16:9": [
+            (512, 288, "Stage 1 Preview"),
+            (1024, 576, "Fast Iteration"),
+            (1184, 672, "Balanced"),
+            (1312, 736, "HD Output"),
+            (1536, 864, "High Detail"),
+            (1888, 1056, "Full HD Output"),
+        ],
+    }

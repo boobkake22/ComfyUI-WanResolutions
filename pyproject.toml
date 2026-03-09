@@ -1,10 +1,10 @@
 [project]
 name = "comfyui-wanresolutions"
-description = "ComfyUI custom node for selecting Wan resolution presets by aspect ratio."
+description = "ComfyUI custom nodes for selecting Wan and LTX resolution presets by aspect ratio."
 authors = [
     { name = "boobkake22", email = "boobkake22@gmail.com" }
 ]
-version = "0.1.0"
+version = "0.2.0"
 license = { file = "LICENSE" }
 readme = "README.md"
 requires-python = ">=3.10"
@@ -16,5 +16,5 @@ Repository = "https://github.com/boobkake22/ComfyUI-WanResolutions"
 
 [tool.comfy]
 PublisherId = "boobkake22"
-DisplayName = "WanResolutions"
+DisplayName = "Wan/LTX Resolutions"
 Icon = ""
