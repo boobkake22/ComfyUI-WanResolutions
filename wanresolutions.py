@@ -346,12 +346,14 @@ class WanResolutions:
 
         return {
             "ui": {
-                "wanresolutions_state": {
-                    "aspect_ratio": resolved_aspect,
-                    "resolution": resolved_resolution,
-                    "source_width": image_w,
-                    "source_height": image_h,
-                }
+                "wanresolutions_state": [
+                    {
+                        "aspect_ratio": resolved_aspect,
+                        "resolution": resolved_resolution,
+                        "source_width": image_w,
+                        "source_height": image_h,
+                    }
+                ]
             },
             "result": result,
         }

@@ -167,7 +167,9 @@ app.registerExtension({
     node.onExecuted = function (output) {
       onExecuted?.call(this, output);
 
-      const state = output?.wanresolutions_state;
+      const state = Array.isArray(output?.wanresolutions_state)
+        ? output.wanresolutions_state[0]
+        : output?.wanresolutions_state;
       if (!state) return;
 
       updateResolutionOptions(this, {
