@@ -102,6 +102,17 @@ class WanResolutions:
             out.append(f"{i}. {w}×{h} — {cls._legacy_note(note)}")
         return out
 
+    @staticmethod
+    def _normalize_text(value: str) -> str:
+        return re.sub(r"\s+", " ", re.sub(r"[\(\)]", "", value or "").lower()).strip()
+
+    @staticmethod
+    def _parse_size(value: str) -> Optional[Tuple[int, int]]:
+        m = re.search(r"(\d+)\s*[x×]\s*(\d+)", value or "", flags=re.IGNORECASE)
+        if not m:
+            return None
+        return int(m.group(1)), int(m.group(2))
+
     @classmethod
     def _all_labels_for_validation(cls) -> List[str]:
         # Union across all aspect ratios so backend validation never rejects.
@@ -140,6 +151,35 @@ class WanResolutions:
         return int(m.group(1)) - 1
 
     @classmethod
+    def _tier_index_for_value(cls, aspect_ratio: str, resolution_label: str) -> Optional[int]:
+        rows = cls._rows_for(aspect_ratio)
+        normalized_value = cls._normalize_text(resolution_label)
+
+        for i, (_, _, note) in enumerate(rows):
+            if cls._normalize_text(note) in normalized_value:
+                return i
+
+        idx = cls._parse_index(resolution_label)
+        if idx is not None:
+            return max(0, min(idx, len(rows) - 1))
+
+        parsed_size = cls._parse_size(resolution_label)
+        if parsed_size is not None:
+            width, height = parsed_size
+            for i, (row_w, row_h, _) in enumerate(rows):
+                if row_w == width and row_h == height:
+                    return i
+
+        return None
+
+    @classmethod
+    def _label_for_dimensions(cls, aspect_ratio: str, width: int, height: int) -> Optional[str]:
+        for row_w, row_h, note in cls._rows_for(aspect_ratio):
+            if row_w == width and row_h == height:
+                return f"{note} — {row_w}×{row_h}"
+        return None
+
+    @classmethod
     def _parse_resolution(cls, aspect_ratio: str, resolution_label: str) -> Tuple[int, int]:
         """
         Robust parsing for new and old workflows:
@@ -148,22 +188,14 @@ class WanResolutions:
         3) Fallback: extract WxH.
         """
         rows = cls._rows_for(aspect_ratio)
-        s = (resolution_label or "").replace("×", "x")
-
-        normalized = re.sub(r"[\(\)]", "", s).lower()
-        for w, h, note in rows:
-            if note.lower() in normalized:
-                return w, h
-
-        idx = cls._parse_index(s)
+        idx = cls._tier_index_for_value(aspect_ratio, resolution_label)
         if idx is not None:
-            idx = max(0, min(idx, len(rows) - 1))
             w, h, _ = rows[idx]
             return w, h
 
-        m = re.search(r"(\d+)\s*x\s*(\d+)", s, flags=re.IGNORECASE)
-        if m:
-            return int(m.group(1)), int(m.group(2))
+        parsed_size = cls._parse_size(resolution_label)
+        if parsed_size is not None:
+            return parsed_size
 
         w, h, _ = rows[0]
         return w, h
@@ -297,11 +329,29 @@ class WanResolutions:
     ):
         resolved_aspect = aspect_ratio
         image_dims = self._image_dimensions(image)
+        image_w = None
+        image_h = None
         if image_dims is not None:
             image_w, image_h = image_dims
             resolved_aspect = self._best_aspect_ratio(image_w, image_h)
 
         w, h = self._parse_resolution(resolved_aspect, resolution)
+        resolved_resolution = self._label_for_dimensions(resolved_aspect, w, h) or resolution
         if round_to_16:
             w, h = self._round_resolution_preserve_aspect(w, h, multiple=16)
-        return (int(w), int(h))
+
+        result = (int(w), int(h))
+        if image_dims is None:
+            return result
+
+        return {
+            "ui": {
+                "wanresolutions_state": {
+                    "aspect_ratio": resolved_aspect,
+                    "resolution": resolved_resolution,
+                    "source_width": image_w,
+                    "source_height": image_h,
+                }
+            },
+            "result": result,
+        }

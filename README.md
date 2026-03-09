@@ -7,6 +7,7 @@ ComfyUI custom node that outputs `width` and `height` presets for Wan 2.2 video 
 - Lets you choose an `aspect_ratio` and resolution quality tier
 - Outputs `INT` values: `width`, `height`
 - Optional `IMAGE` input auto-matches the closest supported aspect ratio as an override
+- When an `IMAGE` input drives the aspect ratio during execution, the node updates the visible `aspect_ratio` and `resolution` widgets to match
 - Optional `round_to_16` snaps output to dimensions divisible by 16 while staying close to the target ratio
 - Keeps equivalent quality tier when you switch aspect ratios in the UI
 

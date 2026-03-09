@@ -1,4 +1,5 @@
 import { app } from "../../scripts/app.js";
+import { api } from "../../scripts/api.js";
 
 const PRESETS = {
   "1:1": [
@@ -114,35 +115,73 @@ function tierIndexForValue(aspectRatio, value) {
   return 0;
 }
 
+function getWidgets(node) {
+  const aspectWidget = node.widgets?.find((w) => w.name === "aspect_ratio");
+  const resWidget = node.widgets?.find((w) => w.name === "resolution");
+  return { aspectWidget, resWidget };
+}
+
+function syncWidgetValues(node) {
+  if (!Array.isArray(node.widgets_values) || !Array.isArray(node.widgets)) return;
+  node.widgets.forEach((widget, index) => {
+    node.widgets_values[index] = widget.value;
+  });
+}
+
+function updateResolutionOptions(node, preferred = {}) {
+  const { aspectWidget, resWidget } = getWidgets(node);
+  if (!aspectWidget || !resWidget) return;
+
+  const aspectRatio = preferred.aspectRatio ?? aspectWidget.value ?? FALLBACK_ASPECT;
+  const options = labelsFor(aspectRatio);
+  const preferredResolution = preferred.resolution;
+  const tierIdx = tierIndexForValue(aspectRatio, preferredResolution ?? resWidget.value);
+
+  aspectWidget.value = aspectRatio;
+  resWidget.options = resWidget.options ?? {};
+  resWidget.options.values = options;
+  resWidget.value =
+    preferredResolution && options.includes(preferredResolution)
+      ? preferredResolution
+      : (options[tierIdx] ?? options[0]);
+
+  syncWidgetValues(node);
+  node.setDirtyCanvas(true, true);
+}
+
 app.registerExtension({
   name: "wanresolutions.dynamic_resolution_list",
+  async setup() {
+    api.addEventListener("executed", ({ detail }) => {
+      const nodeId = detail?.node;
+      const state = detail?.output?.wanresolutions_state;
+      if (nodeId == null || !state) return;
+
+      const node =
+        app.graph?.getNodeById?.(nodeId) ??
+        app.graph?._nodes_by_id?.[nodeId];
+      if (!node || node.comfyClass !== "WanResolutions") return;
+
+      updateResolutionOptions(node, {
+        aspectRatio: state.aspect_ratio,
+        resolution: state.resolution,
+      });
+    });
+  },
   async nodeCreated(node) {
     if (node.comfyClass !== "WanResolutions") return;
 
-    const aspectWidget = node.widgets?.find((w) => w.name === "aspect_ratio");
-    const resWidget = node.widgets?.find((w) => w.name === "resolution");
+    const { aspectWidget, resWidget } = getWidgets(node);
     if (!aspectWidget || !resWidget) return;
-
-    const updateResolutionOptions = () => {
-      const ar = aspectWidget.value;
-      const options = labelsFor(ar);
-
-      // Keep equivalent tier when switching aspect ratios or loading older labels.
-      const tierIdx = tierIndexForValue(ar, resWidget.value);
-      resWidget.options.values = options;
-      resWidget.value = options[tierIdx] ?? options[0];
-
-      node.setDirtyCanvas(true, true);
-    };
 
     // Hook AR dropdown change
     const orig = aspectWidget.callback;
     aspectWidget.callback = (value) => {
       orig?.call(node, value);
-      updateResolutionOptions();
+      updateResolutionOptions(node, { aspectRatio: value });
     };
 
     // Initialize once on creation (and when loading workflows)
-    updateResolutionOptions();
+    updateResolutionOptions(node);
   },
 });
