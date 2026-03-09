@@ -1,5 +1,4 @@
 import { app } from "../../scripts/app.js";
-import { api } from "../../scripts/api.js";
 
 const PRESETS = {
   "1:1": [
@@ -151,23 +150,6 @@ function updateResolutionOptions(node, preferred = {}) {
 
 app.registerExtension({
   name: "wanresolutions.dynamic_resolution_list",
-  async setup() {
-    api.addEventListener("executed", ({ detail }) => {
-      const nodeId = detail?.node;
-      const state = detail?.output?.wanresolutions_state;
-      if (nodeId == null || !state) return;
-
-      const node =
-        app.graph?.getNodeById?.(nodeId) ??
-        app.graph?._nodes_by_id?.[nodeId];
-      if (!node || node.comfyClass !== "WanResolutions") return;
-
-      updateResolutionOptions(node, {
-        aspectRatio: state.aspect_ratio,
-        resolution: state.resolution,
-      });
-    });
-  },
   async nodeCreated(node) {
     if (node.comfyClass !== "WanResolutions") return;
 
@@ -179,6 +161,19 @@ app.registerExtension({
     aspectWidget.callback = (value) => {
       orig?.call(node, value);
       updateResolutionOptions(node, { aspectRatio: value });
+    };
+
+    const onExecuted = node.onExecuted;
+    node.onExecuted = function (output) {
+      onExecuted?.call(this, output);
+
+      const state = output?.wanresolutions_state;
+      if (!state) return;
+
+      updateResolutionOptions(this, {
+        aspectRatio: state.aspect_ratio,
+        resolution: state.resolution,
+      });
     };
 
     // Initialize once on creation (and when loading workflows)
