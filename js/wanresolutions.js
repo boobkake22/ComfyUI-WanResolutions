@@ -188,6 +188,26 @@ function getWidgets(node) {
   return { aspectWidget, resWidget };
 }
 
+function widgetValue(node, widget) {
+  if (!widget) return undefined;
+
+  const index = node.widgets?.indexOf(widget) ?? -1;
+  if (index >= 0 && Array.isArray(node.widgets_values)) {
+    const savedValue = node.widgets_values[index];
+    if (savedValue != null) return savedValue;
+  }
+
+  return widget.value;
+}
+
+function preferredSelections(node, config) {
+  const { aspectWidget, resWidget } = getWidgets(node);
+  return {
+    aspectRatio: widgetValue(node, aspectWidget) ?? config.fallbackAspect,
+    resolution: widgetValue(node, resWidget),
+  };
+}
+
 function syncWidgetValues(node) {
   if (!Array.isArray(node.widgets_values) || !Array.isArray(node.widgets)) return;
   node.widgets.forEach((widget, index) => {
@@ -252,6 +272,13 @@ app.registerExtension({
       });
     };
 
-    updateResolutionOptions(node, config);
+    updateResolutionOptions(node, config, preferredSelections(node, config));
+  },
+
+  loadedGraphNode(node) {
+    const config = configForNode(node);
+    if (!config) return;
+
+    updateResolutionOptions(node, config, preferredSelections(node, config));
   },
 });
