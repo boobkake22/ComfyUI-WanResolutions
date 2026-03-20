@@ -125,6 +125,49 @@ const NODE_CONFIGS = {
   },
 };
 
+const CONTEXT_MENU_SHIELD_KEY = "__wanresolutionsContextMenuShield";
+
+function stopMenuEvent(event) {
+  event.stopPropagation();
+}
+
+function shieldContextMenuRoot(root) {
+  if (!root || root[CONTEXT_MENU_SHIELD_KEY]) return;
+
+  Object.defineProperty(root, CONTEXT_MENU_SHIELD_KEY, {
+    value: true,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
+
+  root.addEventListener("pointerdown", stopMenuEvent);
+  root.addEventListener("pointerup", stopMenuEvent);
+  root.addEventListener("click", stopMenuEvent);
+}
+
+function installContextMenuShield() {
+  const liteGraph = globalThis.LiteGraph;
+  const OriginalContextMenu = liteGraph?.ContextMenu;
+  if (!OriginalContextMenu || OriginalContextMenu[CONTEXT_MENU_SHIELD_KEY]) return;
+
+  class ShieldedContextMenu extends OriginalContextMenu {
+    constructor(values, options) {
+      super(values, options);
+      shieldContextMenuRoot(this.root);
+    }
+  }
+
+  Object.defineProperty(ShieldedContextMenu, CONTEXT_MENU_SHIELD_KEY, {
+    value: true,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
+
+  liteGraph.ContextMenu = ShieldedContextMenu;
+}
+
 function configForNode(node) {
   return NODE_CONFIGS[node.comfyClass] ?? null;
 }
@@ -246,7 +289,13 @@ function extractState(output) {
 
 app.registerExtension({
   name: "aspectresolutions.dynamic_resolution_list",
+  async setup() {
+    installContextMenuShield();
+  },
+
   async nodeCreated(node) {
+    installContextMenuShield();
+
     const config = configForNode(node);
     if (!config) return;
 
