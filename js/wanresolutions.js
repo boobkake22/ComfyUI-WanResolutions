@@ -131,9 +131,43 @@ const OPEN_MENU_SELECTORS = [
   ".p-popover",
   "[data-pc-name='popover']",
 ];
+const MENU_INTERACTION_TRACKER_KEY = "__wanresolutionsMenuInteractionTracker";
+const MENU_INTERACTION_WINDOW_MS = 300;
+const TOGGLE_GUARD_WIDGET_NAMES = ["round_to_16", "force_to_16", "image_bypass"];
+let lastMenuInteractionAt = 0;
 
 function hasOpenMenu() {
   return OPEN_MENU_SELECTORS.some((selector) => document.querySelector(selector));
+}
+
+function noteMenuInteraction() {
+  lastMenuInteractionAt = performance.now();
+}
+
+function recentMenuInteraction() {
+  return (performance.now() - lastMenuInteractionAt) <= MENU_INTERACTION_WINDOW_MS;
+}
+
+function installMenuInteractionTracker() {
+  if (document[MENU_INTERACTION_TRACKER_KEY]) return;
+
+  Object.defineProperty(document, MENU_INTERACTION_TRACKER_KEY, {
+    value: true,
+    configurable: false,
+    enumerable: false,
+    writable: false,
+  });
+
+  const trackMenuInteraction = (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) return;
+    if (!target.closest(OPEN_MENU_SELECTORS.join(","))) return;
+    noteMenuInteraction();
+  };
+
+  document.addEventListener("pointerdown", trackMenuInteraction, true);
+  document.addEventListener("pointerup", trackMenuInteraction, true);
+  document.addEventListener("click", trackMenuInteraction, true);
 }
 
 function guardPointerDown(widget, shouldBlock) {
@@ -143,6 +177,19 @@ function guardPointerDown(widget, shouldBlock) {
   widget.onPointerDown = function (pointer, node, canvas) {
     if (shouldBlock(pointer, node, canvas)) return true;
     return original?.call(this, pointer, node, canvas) ?? false;
+  };
+}
+
+function guardWidgetHitTesting(node, shouldBlock) {
+  const original = node.getWidgetOnPos;
+  if (typeof original !== "function") return;
+
+  node.getWidgetOnPos = function (...args) {
+    const widget = original.apply(this, args);
+    if (widget && TOGGLE_GUARD_WIDGET_NAMES.includes(widget.name) && shouldBlock()) {
+      return null;
+    }
+    return widget;
   };
 }
 
@@ -268,15 +315,19 @@ function extractState(output) {
 app.registerExtension({
   name: "aspectresolutions.dynamic_resolution_list",
   async nodeCreated(node) {
+    installMenuInteractionTracker();
+
     const config = configForNode(node);
     if (!config) return;
 
     const { aspectWidget, resWidget } = getWidgets(node);
     if (!aspectWidget || !resWidget) return;
 
+    guardWidgetHitTesting(node, () => hasOpenMenu() || recentMenuInteraction());
+
     for (const widget of node.widgets ?? []) {
-      if (!["round_to_16", "force_to_16", "image_bypass"].includes(widget.name)) continue;
-      guardPointerDown(widget, () => hasOpenMenu());
+      if (!TOGGLE_GUARD_WIDGET_NAMES.includes(widget.name)) continue;
+      guardPointerDown(widget, () => hasOpenMenu() || recentMenuInteraction());
     }
 
     const orig = aspectWidget.callback;
