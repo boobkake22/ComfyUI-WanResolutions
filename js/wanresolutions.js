@@ -125,47 +125,25 @@ const NODE_CONFIGS = {
   },
 };
 
-const CONTEXT_MENU_SHIELD_KEY = "__wanresolutionsContextMenuShield";
+const OPEN_MENU_SELECTORS = [
+  ".litegraph.litecontextmenu",
+  ".litecontextmenu",
+  ".p-popover",
+  "[data-pc-name='popover']",
+];
 
-function stopMenuEvent(event) {
-  event.stopPropagation();
+function hasOpenMenu() {
+  return OPEN_MENU_SELECTORS.some((selector) => document.querySelector(selector));
 }
 
-function shieldContextMenuRoot(root) {
-  if (!root || root[CONTEXT_MENU_SHIELD_KEY]) return;
+function guardPointerDown(widget, shouldBlock) {
+  if (!widget) return;
 
-  Object.defineProperty(root, CONTEXT_MENU_SHIELD_KEY, {
-    value: true,
-    configurable: false,
-    enumerable: false,
-    writable: false,
-  });
-
-  root.addEventListener("pointerdown", stopMenuEvent);
-  root.addEventListener("pointerup", stopMenuEvent);
-  root.addEventListener("click", stopMenuEvent);
-}
-
-function installContextMenuShield() {
-  const liteGraph = globalThis.LiteGraph;
-  const OriginalContextMenu = liteGraph?.ContextMenu;
-  if (!OriginalContextMenu || OriginalContextMenu[CONTEXT_MENU_SHIELD_KEY]) return;
-
-  class ShieldedContextMenu extends OriginalContextMenu {
-    constructor(values, options) {
-      super(values, options);
-      shieldContextMenuRoot(this.root);
-    }
-  }
-
-  Object.defineProperty(ShieldedContextMenu, CONTEXT_MENU_SHIELD_KEY, {
-    value: true,
-    configurable: false,
-    enumerable: false,
-    writable: false,
-  });
-
-  liteGraph.ContextMenu = ShieldedContextMenu;
+  const original = widget.onPointerDown;
+  widget.onPointerDown = function (pointer, node, canvas) {
+    if (shouldBlock(pointer, node, canvas)) return true;
+    return original?.call(this, pointer, node, canvas) ?? false;
+  };
 }
 
 function configForNode(node) {
@@ -289,18 +267,17 @@ function extractState(output) {
 
 app.registerExtension({
   name: "aspectresolutions.dynamic_resolution_list",
-  async setup() {
-    installContextMenuShield();
-  },
-
   async nodeCreated(node) {
-    installContextMenuShield();
-
     const config = configForNode(node);
     if (!config) return;
 
     const { aspectWidget, resWidget } = getWidgets(node);
     if (!aspectWidget || !resWidget) return;
+
+    for (const widget of node.widgets ?? []) {
+      if (!["round_to_16", "force_to_16", "image_bypass"].includes(widget.name)) continue;
+      guardPointerDown(widget, () => hasOpenMenu());
+    }
 
     const orig = aspectWidget.callback;
     aspectWidget.callback = (value) => {
