@@ -18,10 +18,18 @@ ComfyUI custom nodes that output `width` and `height` presets for Wan 2.2 and LT
 - Uses dimensions divisible by `32`
 - Omits `round_to_16`
 - Adds `image_bypass` so a connected `IMAGE` input can be ignored when needed
+- Adds `upscaler_power` options for `none`, `x1.5`, and `x2`; upscale modes output the lower base resolution needed to reach the selected target tier
+- The `upscaler_power` combo accepts a direct connection from the `LTX Upscaler Power` support node or any compatible generic/combo switch
 - Preset tiers are tuned around current LTX 2.3 guidance:
   - official fast-iteration aspect sizes such as `640×640`, `512×768`, `768×512`, `512×704`, and `704×512`
   - the documented two-stage workflow, where lower preview passes feed higher output tiers
+  - the current official landscape workflow pair of `960×544` base resolution and `1920×1088` x2 output
   - `720p` / `1080p`-class output targets, snapped to legal multiples of `32` and adapted per aspect ratio
+
+### `LTX Upscaler Power`
+
+- Outputs a connectable `COMBO` value: `none`, `x1.5`, or `x2`
+- Connects directly to the `LTXResolutions.upscaler_power` combo, or can pass through a compatible generic/combo switch first
 
 Supported aspect ratios for both nodes:
 
@@ -51,11 +59,13 @@ Restart ComfyUI after installing.
 3. Optional: for `WanResolutions`, enable `round_to_16`.
 4. Optional: connect an `IMAGE` input to auto-select the nearest aspect ratio.
 5. Optional: on `LTXResolutions`, enable `image_bypass` to ignore the connected `IMAGE`.
-6. Connect `width` and `height` outputs to your downstream nodes.
+6. Optional: select an `upscaler_power`, or connect `LTX Upscaler Power` directly to the `upscaler_power` combo.
+7. Connect `width` and `height` outputs to your downstream nodes.
 
 ## Notes
 
-- The LTX presets now follow current LTX 2.3 notes rather than older `0.9.x` guidance. The documented anchor sizes are `640×640`, `512×768`, `768×512`, `512×704`, `704×512`, plus `1280×720` / `1920×1080` style target outputs in the multiscale workflows. This node converts those targets into aspect-based, `32`-divisible presets.
+- The LTX presets follow current LTX 2.3 notes rather than older `0.9.x` guidance. The documented anchor sizes are `640×640`, `512×768`, `768×512`, `512×704`, and `704×512`. Current official ComfyUI workflows use `960×544` before x2 spatial upscaling and `1920×1088` afterward.
+- Upscaler modes treat the selected preset as the desired final target, round it upward to a factor-compatible legal size when necessary, and output a base resolution divisible by `32`.
 - `WanResolutions` keeps its existing Wan 2.2 preset table for backwards compatibility.
 
 ## License

@@ -1,5 +1,14 @@
 import re
+from fractions import Fraction
 from typing import Dict, List, Optional, Tuple
+
+
+LTX_UPSCALER_POWER_CHOICES = ("none", "x1.5", "x2")
+LTX_UPSCALER_POWER_FACTORS = {
+    "none": Fraction(1, 1),
+    "x1.5": Fraction(3, 2),
+    "x2": Fraction(2, 1),
+}
 
 
 class AspectResolutionNodeBase:
@@ -19,6 +28,7 @@ class AspectResolutionNodeBase:
     ASPECT_ORDER = ("1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9")
     ALLOW_ROUND_TO_16 = False
     ALLOW_IMAGE_BYPASS = False
+    ALLOW_UPSCALER_POWER = False
     LEGACY_NOTE_ALIASES: Dict[str, str] = {}
     PRESETS: Dict[str, List[Tuple[int, int, str]]] = {}
 
@@ -81,6 +91,14 @@ class AspectResolutionNodeBase:
             required["round_to_16"] = ("BOOLEAN", {"default": False})
         if cls.ALLOW_IMAGE_BYPASS:
             required["image_bypass"] = ("BOOLEAN", {"default": False})
+        if cls.ALLOW_UPSCALER_POWER:
+            required["upscaler_power"] = (
+                "COMBO",
+                {
+                    "options": list(LTX_UPSCALER_POWER_CHOICES),
+                    "default": "none",
+                },
+            )
 
         return {
             "required": required,
@@ -101,7 +119,12 @@ class AspectResolutionNodeBase:
         rows = cls._rows_for(aspect_ratio)
         normalized_value = cls._normalize_text(resolution_label)
 
-        for i, (_, _, note) in enumerate(rows):
+        note_matches = sorted(
+            enumerate(rows),
+            key=lambda indexed_row: len(cls._normalize_text(indexed_row[1][2])),
+            reverse=True,
+        )
+        for i, (_, _, note) in note_matches:
             if cls._normalize_text(note) in normalized_value:
                 return i
 
@@ -151,6 +174,53 @@ class AspectResolutionNodeBase:
         if multiple <= 0:
             return int(round(value))
         return max(multiple, int(round(float(value) / float(multiple))) * multiple)
+
+    @staticmethod
+    def _round_up_to_multiple(value: int, multiple: int) -> int:
+        if multiple <= 0:
+            return int(value)
+        return max(multiple, ((int(value) + multiple - 1) // multiple) * multiple)
+
+    @staticmethod
+    def _normalize_upscaler_power(value: Optional[str]) -> str:
+        normalized = re.sub(r"\s+", "", str(value or "none").lower())
+        aliases = {
+            "1": "none",
+            "1.0": "none",
+            "x1": "none",
+            "x1.0": "none",
+            "1x": "none",
+            "1.0x": "none",
+            "1.5": "x1.5",
+            "1.5x": "x1.5",
+            "2": "x2",
+            "2.0": "x2",
+            "2x": "x2",
+            "x2.0": "x2",
+        }
+        normalized = aliases.get(normalized, normalized)
+        return normalized if normalized in LTX_UPSCALER_POWER_FACTORS else "none"
+
+    @classmethod
+    def _apply_upscaler_power(
+        cls,
+        width: int,
+        height: int,
+        upscaler_power: Optional[str],
+    ) -> Tuple[int, int]:
+        factor = LTX_UPSCALER_POWER_FACTORS[cls._normalize_upscaler_power(upscaler_power)]
+        if factor == 1:
+            return int(width), int(height)
+
+        # Base dimensions must be divisible by 32. This makes the compatible
+        # final-resolution step 32 * the reduced fraction numerator.
+        final_step = 32 * factor.numerator
+        final_width = cls._round_up_to_multiple(width, final_step)
+        final_height = cls._round_up_to_multiple(height, final_step)
+        return (
+            final_width * factor.denominator // factor.numerator,
+            final_height * factor.denominator // factor.numerator,
+        )
 
     @classmethod
     def _round_resolution_preserve_aspect(
@@ -270,6 +340,7 @@ class AspectResolutionNodeBase:
         image=None,
         round_to_16: bool = False,
         image_bypass: bool = False,
+        upscaler_power: str = "none",
     ):
         resolved_aspect = aspect_ratio
         image_input = None if (self.ALLOW_IMAGE_BYPASS and image_bypass) else image
@@ -284,6 +355,8 @@ class AspectResolutionNodeBase:
         resolved_resolution = self._label_for_dimensions(resolved_aspect, w, h) or resolution
         if self.ALLOW_ROUND_TO_16 and round_to_16:
             w, h = self._round_resolution_preserve_aspect(w, h, multiple=16)
+        if self.ALLOW_UPSCALER_POWER:
+            w, h = self._apply_upscaler_power(w, h, upscaler_power)
 
         result = (int(w), int(h))
         if image_dims is None:
@@ -379,6 +452,7 @@ class LTXResolutions(AspectResolutionNodeBase):
 
     CATEGORY = "LTX"
     ALLOW_IMAGE_BYPASS = True
+    ALLOW_UPSCALER_POWER = True
 
     PRESETS: Dict[str, List[Tuple[int, int, str]]] = {
         "1:1": [
@@ -423,18 +497,46 @@ class LTXResolutions(AspectResolutionNodeBase):
         ],
         "9:16": [
             (288, 512, "Stage 1 Preview"),
-            (576, 1024, "Fast Iteration"),
+            (544, 960, "Fast Iteration"),
             (672, 1184, "Balanced"),
             (736, 1312, "HD Output"),
             (864, 1536, "High Detail"),
-            (1056, 1888, "Full HD Output"),
+            (1088, 1920, "Full HD Output"),
         ],
         "16:9": [
             (512, 288, "Stage 1 Preview"),
-            (1024, 576, "Fast Iteration"),
+            (960, 544, "Fast Iteration"),
             (1184, 672, "Balanced"),
             (1312, 736, "HD Output"),
             (1536, 864, "High Detail"),
-            (1888, 1056, "Full HD Output"),
+            (1920, 1088, "Full HD Output"),
         ],
     }
+
+
+class LTXUpscalerPower:
+    """
+    Connectable LTX upscaler-power value for the LTXResolutions combo.
+    """
+
+    CATEGORY = "LTX"
+    FUNCTION = "select"
+    RETURN_TYPES = ("COMBO",)
+    RETURN_NAMES = ("upscaler_power",)
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "upscaler_power": (
+                    "COMBO",
+                    {
+                        "options": list(LTX_UPSCALER_POWER_CHOICES),
+                        "default": "none",
+                    },
+                ),
+            },
+        }
+
+    def select(self, upscaler_power: str):
+        return (AspectResolutionNodeBase._normalize_upscaler_power(upscaler_power),)

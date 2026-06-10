@@ -107,19 +107,19 @@ const NODE_CONFIGS = {
       ],
       "9:16": [
         [288, 512, "Stage 1 Preview"],
-        [576, 1024, "Fast Iteration"],
+        [544, 960, "Fast Iteration"],
         [672, 1184, "Balanced"],
         [736, 1312, "HD Output"],
         [864, 1536, "High Detail"],
-        [1056, 1888, "Full HD Output"],
+        [1088, 1920, "Full HD Output"],
       ],
       "16:9": [
         [512, 288, "Stage 1 Preview"],
-        [1024, 576, "Fast Iteration"],
+        [960, 544, "Fast Iteration"],
         [1184, 672, "Balanced"],
         [1312, 736, "HD Output"],
         [1536, 864, "High Detail"],
-        [1888, 1056, "Full HD Output"],
+        [1920, 1088, "Full HD Output"],
       ],
     },
   },
@@ -230,11 +230,14 @@ function tierIndexForValue(config, aspectRatio, value) {
   const rows = rowsFor(config, aspectRatio);
   const normalizedValue = normalizeText(value);
 
-  const noteMatch = rows.findIndex(([, , note]) => {
-    const normalizedNote = normalizeText(note);
+  const noteMatches = rows
+    .map((row, index) => ({ row, index }))
+    .sort((a, b) => normalizeText(b.row[2]).length - normalizeText(a.row[2]).length);
+  const noteMatch = noteMatches.find(({ row }) => {
+    const normalizedNote = normalizeText(row[2]);
     return normalizedNote && normalizedValue.includes(normalizedNote);
   });
-  if (noteMatch >= 0) return noteMatch;
+  if (noteMatch) return noteMatch.index;
 
   const idx = leadingIndex(value);
   if (idx != null) {
