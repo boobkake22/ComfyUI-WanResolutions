@@ -26,10 +26,11 @@ class AspectResolutionNodeBase:
 
     FALLBACK_ASPECT = "1:1"
     ASPECT_ORDER = ("1:1", "2:3", "3:2", "3:4", "4:3", "9:16", "16:9")
-    ALLOW_ROUND_TO_16 = False
+    ALLOW_OFFICIAL_ONLY = False
     ALLOW_IMAGE_BYPASS = False
     ALLOW_UPSCALER_POWER = False
     LEGACY_NOTE_ALIASES: Dict[str, str] = {}
+    OFFICIAL_SIZES: List[Tuple[int, int]] = []
     PRESETS: Dict[str, List[Tuple[int, int, str]]] = {}
 
     @classmethod
@@ -67,10 +68,15 @@ class AspectResolutionNodeBase:
     @classmethod
     def _all_labels_for_validation(cls) -> List[str]:
         # Union across all aspect ratios so backend validation never rejects.
+        # Official-bucket labels are included so the UI may swap to them when
+        # `official_only` is enabled.
         seen = set()
         out = []
         for ar in cls.ASPECT_ORDER:
-            for label in cls._labels_for(ar) + cls._legacy_labels_for(ar):
+            labels = cls._labels_for(ar) + cls._legacy_labels_for(ar)
+            if cls.ALLOW_OFFICIAL_ONLY:
+                labels = labels + cls._official_labels_for(ar)
+            for label in labels:
                 if label not in seen:
                     seen.add(label)
                     out.append(label)
@@ -87,8 +93,8 @@ class AspectResolutionNodeBase:
             "aspect_ratio": (aspect_choices, {"default": default_ar}),
             "resolution": (all_resolution_choices, {"default": default_res}),
         }
-        if cls.ALLOW_ROUND_TO_16:
-            required["round_to_16"] = ("BOOLEAN", {"default": False})
+        if cls.ALLOW_OFFICIAL_ONLY:
+            required["official_only"] = ("BOOLEAN", {"default": False})
         if cls.ALLOW_IMAGE_BYPASS:
             required["image_bypass"] = ("BOOLEAN", {"default": False})
         if cls.ALLOW_UPSCALER_POWER:
@@ -106,6 +112,15 @@ class AspectResolutionNodeBase:
                 "image": ("IMAGE",),
             },
         }
+
+    @classmethod
+    def VALIDATE_INPUTS(cls, resolution=None):
+        # `resolution` is parsed leniently in pick(), so a workflow saved against an
+        # older preset table (whose label is no longer in the current combo list)
+        # still loads and runs instead of being rejected by ComfyUI's strict combo
+        # validation. Declaring `resolution` here tells ComfyUI to skip the default
+        # list-membership check for it and defer to this method, which always accepts.
+        return True
 
     @classmethod
     def _parse_index(cls, label: str) -> Optional[int]:
@@ -148,6 +163,40 @@ class AspectResolutionNodeBase:
                 return f"{note} — {row_w}×{row_h}"
         return None
 
+    @staticmethod
+    def _official_label(width: int, height: int) -> str:
+        return f"Official {min(int(width), int(height))}P — {int(width)}×{int(height)}"
+
+    @classmethod
+    def _official_sizes_for_orientation(cls, landscape: bool) -> List[Tuple[int, int]]:
+        pool = [s for s in cls.OFFICIAL_SIZES if (s[0] >= s[1]) == landscape]
+        pool = pool or list(cls.OFFICIAL_SIZES)
+        return sorted(pool, key=lambda wh: wh[0] * wh[1])
+
+    @classmethod
+    def _official_labels_for(cls, aspect_ratio: str) -> List[str]:
+        if not cls.OFFICIAL_SIZES:
+            return []
+        ratio = cls._parse_aspect_ratio_value(aspect_ratio)
+        landscape = True if ratio is None else ratio >= 1.0
+        return [cls._official_label(w, h) for w, h in cls._official_sizes_for_orientation(landscape)]
+
+    @classmethod
+    def _snap_official(
+        cls, width: int, height: int, aspect_ratio: Optional[str] = None
+    ) -> Tuple[int, int]:
+        """Snap to the nearest official bucket. Orientation follows the resolved aspect
+        ratio when given (so an attached image can drive it), otherwise width/height.
+        The 480p vs 720p choice is the nearest official by area (square→landscape)."""
+        if not cls.OFFICIAL_SIZES:
+            return int(width), int(height)
+        ratio = cls._parse_aspect_ratio_value(aspect_ratio) if aspect_ratio else None
+        landscape = (width >= height) if ratio is None else ratio >= 1.0
+        pool = cls._official_sizes_for_orientation(landscape)
+        area = int(width) * int(height)
+        best = min(pool, key=lambda wh: (abs(wh[0] * wh[1] - area), wh))
+        return int(best[0]), int(best[1])
+
     @classmethod
     def _parse_resolution(cls, aspect_ratio: str, resolution_label: str) -> Tuple[int, int]:
         """
@@ -168,12 +217,6 @@ class AspectResolutionNodeBase:
 
         w, h, _ = rows[0]
         return w, h
-
-    @staticmethod
-    def _round_to_multiple(value: float, multiple: int) -> int:
-        if multiple <= 0:
-            return int(round(value))
-        return max(multiple, int(round(float(value) / float(multiple))) * multiple)
 
     @staticmethod
     def _round_up_to_multiple(value: int, multiple: int) -> int:
@@ -221,55 +264,6 @@ class AspectResolutionNodeBase:
             final_width * factor.denominator // factor.numerator,
             final_height * factor.denominator // factor.numerator,
         )
-
-    @classmethod
-    def _round_resolution_preserve_aspect(
-        cls,
-        width: int,
-        height: int,
-        multiple: int = 16,
-    ) -> Tuple[int, int]:
-        """
-        Snap dimensions to a required multiple while keeping aspect ratio as close
-        as possible to the requested width/height.
-        """
-        if width <= 0 or height <= 0:
-            return (
-                cls._round_to_multiple(max(1, width), multiple),
-                cls._round_to_multiple(max(1, height), multiple),
-            )
-
-        target_ratio = float(width) / float(height)
-        target_area = width * height
-
-        base_w = cls._round_to_multiple(width, multiple)
-        base_h = cls._round_to_multiple(height, multiple)
-
-        width_candidates = {max(multiple, base_w + (step * multiple)) for step in range(-3, 4)}
-        height_candidates = {max(multiple, base_h + (step * multiple)) for step in range(-3, 4)}
-
-        candidates = set()
-
-        for w in width_candidates:
-            h = cls._round_to_multiple(float(w) / target_ratio, multiple)
-            candidates.add((w, h))
-        for h in height_candidates:
-            w = cls._round_to_multiple(float(h) * target_ratio, multiple)
-            candidates.add((w, h))
-
-        for w in width_candidates:
-            for h in height_candidates:
-                candidates.add((w, h))
-
-        best_w, best_h = min(
-            candidates,
-            key=lambda wh: (
-                abs((float(wh[0]) / float(wh[1])) - target_ratio),
-                abs(wh[0] - width) + abs(wh[1] - height),
-                abs((wh[0] * wh[1]) - target_area),
-            ),
-        )
-        return int(best_w), int(best_h)
 
     @staticmethod
     def _parse_aspect_ratio_value(aspect_ratio: str) -> Optional[float]:
@@ -338,7 +332,7 @@ class AspectResolutionNodeBase:
         aspect_ratio: str,
         resolution: str,
         image=None,
-        round_to_16: bool = False,
+        official_only: bool = False,
         image_bypass: bool = False,
         upscaler_power: str = "none",
     ):
@@ -352,9 +346,11 @@ class AspectResolutionNodeBase:
             resolved_aspect = self._best_aspect_ratio(image_w, image_h)
 
         w, h = self._parse_resolution(resolved_aspect, resolution)
-        resolved_resolution = self._label_for_dimensions(resolved_aspect, w, h) or resolution
-        if self.ALLOW_ROUND_TO_16 and round_to_16:
-            w, h = self._round_resolution_preserve_aspect(w, h, multiple=16)
+        if self.ALLOW_OFFICIAL_ONLY and official_only:
+            w, h = self._snap_official(w, h, aspect_ratio=resolved_aspect)
+            resolved_resolution = self._official_label(w, h)
+        else:
+            resolved_resolution = self._label_for_dimensions(resolved_aspect, w, h) or resolution
         if self.ALLOW_UPSCALER_POWER:
             w, h = self._apply_upscaler_power(w, h, upscaler_power)
 
@@ -376,69 +372,60 @@ class AspectResolutionNodeBase:
 
 class WanResolutions(AspectResolutionNodeBase):
     """
-    Wan 2.2 resolution presets with optional round-to-16 snapping.
+    Wan 2.2 (A14B) resolution presets. Every size is divisible by 16 — the real
+    alignment requirement for the A14B T2V/I2V models (8x VAE stride x 2x DiT
+    patch). The lower tiers are faster, lower-area conveniences; "Wan 2.2 Native"
+    matches what the model actually targets. Enable `official_only` to snap output
+    to one of Wan's four CLI buckets (1280x720 / 720x1280 / 832x480 / 480x832).
     """
 
     CATEGORY = "WAN"
-    ALLOW_ROUND_TO_16 = True
+    ALLOW_OFFICIAL_ONLY = True
+    OFFICIAL_SIZES = [(1280, 720), (720, 1280), (832, 480), (480, 832)]
     LEGACY_NOTE_ALIASES = {"Wan 2.2 Native": "(WAN 2.2 native)"}
 
     PRESETS: Dict[str, List[Tuple[int, int, str]]] = {
         "1:1": [
-            (480, 480, "Fast Samples"),
-            (640, 640, "Fast and OK"),
-            (768, 768, "Reasonable"),
-            (800, 800, "Better Details"),
-            (880, 880, "Really Good"),
+            (480, 480, "Fast Draft"),
+            (640, 640, "Preview"),
+            (832, 832, "High Detail"),
             (960, 960, "Wan 2.2 Native"),
         ],
         "2:3": [
-            (384, 576, "Fast Samples"),
-            (528, 768, "Fast and OK"),
-            (624, 912, "Reasonable"),
-            (656, 960, "Better Details"),
-            (736, 1072, "Really Good"),
-            (784, 1136, "Wan 2.2 Native"),
+            (384, 576, "Fast Draft"),
+            (512, 768, "Preview"),
+            (672, 1008, "High Detail"),
+            (768, 1168, "Wan 2.2 Native"),
         ],
         "3:2": [
-            (576, 384, "Fast Samples"),
-            (768, 528, "Fast and OK"),
-            (912, 624, "Reasonable"),
-            (960, 656, "Better Details"),
-            (1072, 736, "Really Good"),
-            (1136, 784, "Wan 2.2 Native"),
+            (576, 384, "Fast Draft"),
+            (768, 512, "Preview"),
+            (1008, 672, "High Detail"),
+            (1168, 768, "Wan 2.2 Native"),
         ],
         "3:4": [
-            (416, 544, "Fast Samples"),
-            (560, 720, "Fast and OK"),
-            (672, 864, "Reasonable"),
-            (720, 912, "Better Details"),
-            (784, 1008, "Really Good"),
-            (848, 1088, "Wan 2.2 Native"),
+            (432, 576, "Fast Draft"),
+            (576, 768, "Preview"),
+            (720, 960, "High Detail"),
+            (816, 1104, "Wan 2.2 Native"),
         ],
         "4:3": [
-            (544, 416, "Fast Samples"),
-            (720, 560, "Fast and OK"),
-            (864, 672, "Reasonable"),
-            (912, 720, "Better Details"),
-            (1008, 784, "Really Good"),
-            (1088, 848, "Wan 2.2 Native"),
+            (576, 432, "Fast Draft"),
+            (768, 576, "Preview"),
+            (960, 720, "High Detail"),
+            (1104, 816, "Wan 2.2 Native"),
         ],
         "9:16": [
-            (368, 624, "Fast Samples"),
-            (480, 848, "Fast and OK"),
-            (576, 1008, "Reasonable"),
-            (608, 1072, "Better Details"),
-            (672, 1184, "Really Good"),
-            (720, 1264, "Wan 2.2 Native"),
+            (352, 624, "Fast Draft"),
+            (480, 848, "Preview"),
+            (624, 1104, "High Detail"),
+            (720, 1280, "Wan 2.2 Native"),
         ],
         "16:9": [
-            (624, 368, "Fast Samples"),
-            (848, 480, "Fast and OK"),
-            (1008, 576, "Reasonable"),
-            (1072, 608, "Better Details"),
-            (1184, 672, "Really Good"),
-            (1264, 720, "Wan 2.2 Native"),
+            (624, 352, "Fast Draft"),
+            (848, 480, "Preview"),
+            (1104, 624, "High Detail"),
+            (1280, 720, "Wan 2.2 Native"),
         ],
     }
 

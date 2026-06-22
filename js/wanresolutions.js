@@ -3,62 +3,49 @@ import { app } from "../../scripts/app.js";
 const NODE_CONFIGS = {
   WanResolutions: {
     fallbackAspect: "1:1",
+    officialSizes: [[1280, 720], [720, 1280], [832, 480], [480, 832]],
     presets: {
       "1:1": [
-        [480, 480, "Fast Samples"],
-        [640, 640, "Fast and OK"],
-        [768, 768, "Reasonable"],
-        [800, 800, "Better Details"],
-        [880, 880, "Really Good"],
+        [480, 480, "Fast Draft"],
+        [640, 640, "Preview"],
+        [832, 832, "High Detail"],
         [960, 960, "Wan 2.2 Native"],
       ],
       "2:3": [
-        [384, 576, "Fast Samples"],
-        [528, 768, "Fast and OK"],
-        [624, 912, "Reasonable"],
-        [656, 960, "Better Details"],
-        [736, 1072, "Really Good"],
-        [784, 1136, "Wan 2.2 Native"],
+        [384, 576, "Fast Draft"],
+        [512, 768, "Preview"],
+        [672, 1008, "High Detail"],
+        [768, 1168, "Wan 2.2 Native"],
       ],
       "3:2": [
-        [576, 384, "Fast Samples"],
-        [768, 528, "Fast and OK"],
-        [912, 624, "Reasonable"],
-        [960, 656, "Better Details"],
-        [1072, 736, "Really Good"],
-        [1136, 784, "Wan 2.2 Native"],
+        [576, 384, "Fast Draft"],
+        [768, 512, "Preview"],
+        [1008, 672, "High Detail"],
+        [1168, 768, "Wan 2.2 Native"],
       ],
       "3:4": [
-        [416, 544, "Fast Samples"],
-        [560, 720, "Fast and OK"],
-        [672, 864, "Reasonable"],
-        [720, 912, "Better Details"],
-        [784, 1008, "Really Good"],
-        [848, 1088, "Wan 2.2 Native"],
+        [432, 576, "Fast Draft"],
+        [576, 768, "Preview"],
+        [720, 960, "High Detail"],
+        [816, 1104, "Wan 2.2 Native"],
       ],
       "4:3": [
-        [544, 416, "Fast Samples"],
-        [720, 560, "Fast and OK"],
-        [864, 672, "Reasonable"],
-        [912, 720, "Better Details"],
-        [1008, 784, "Really Good"],
-        [1088, 848, "Wan 2.2 Native"],
+        [576, 432, "Fast Draft"],
+        [768, 576, "Preview"],
+        [960, 720, "High Detail"],
+        [1104, 816, "Wan 2.2 Native"],
       ],
       "9:16": [
-        [368, 624, "Fast Samples"],
-        [480, 848, "Fast and OK"],
-        [576, 1008, "Reasonable"],
-        [608, 1072, "Better Details"],
-        [672, 1184, "Really Good"],
-        [720, 1264, "Wan 2.2 Native"],
+        [352, 624, "Fast Draft"],
+        [480, 848, "Preview"],
+        [624, 1104, "High Detail"],
+        [720, 1280, "Wan 2.2 Native"],
       ],
       "16:9": [
-        [624, 368, "Fast Samples"],
-        [848, 480, "Fast and OK"],
-        [1008, 576, "Reasonable"],
-        [1072, 608, "Better Details"],
-        [1184, 672, "Really Good"],
-        [1264, 720, "Wan 2.2 Native"],
+        [624, 352, "Fast Draft"],
+        [848, 480, "Preview"],
+        [1104, 624, "High Detail"],
+        [1280, 720, "Wan 2.2 Native"],
       ],
     },
   },
@@ -133,7 +120,7 @@ const OPEN_MENU_SELECTORS = [
 ];
 const MENU_INTERACTION_TRACKER_KEY = "__wanresolutionsMenuInteractionTracker";
 const MENU_INTERACTION_WINDOW_MS = 300;
-const TOGGLE_GUARD_WIDGET_NAMES = ["round_to_16", "force_to_16", "image_bypass"];
+const TOGGLE_GUARD_WIDGET_NAMES = ["official_only", "image_bypass"];
 let lastMenuInteractionAt = 0;
 
 function hasOpenMenu() {
@@ -201,7 +188,24 @@ function rowsFor(config, aspectRatio) {
   return config.presets[aspectRatio] ?? config.presets[config.fallbackAspect];
 }
 
-function labelsFor(config, aspectRatio) {
+function aspectIsLandscape(aspectRatio) {
+  const m = /^\s*(\d+)\s*:\s*(\d+)\s*$/.exec(aspectRatio || "");
+  if (!m) return true;
+  return parseInt(m[1], 10) >= parseInt(m[2], 10);
+}
+
+function officialLabelsFor(config, aspectRatio) {
+  if (!config.officialSizes) return [];
+  const landscape = aspectIsLandscape(aspectRatio);
+  const pool = config.officialSizes.filter(([w, h]) => (w >= h) === landscape);
+  return (pool.length ? pool : config.officialSizes)
+    .slice()
+    .sort((a, b) => a[0] * a[1] - b[0] * b[1])
+    .map(([w, h]) => `Official ${Math.min(w, h)}P — ${w}×${h}`);
+}
+
+function labelsFor(config, aspectRatio, officialOnly) {
+  if (officialOnly && config.officialSizes) return officialLabelsFor(config, aspectRatio);
   const rows = rowsFor(config, aspectRatio);
   return rows.map(([w, h, note]) => `${note} — ${w}×${h}`);
 }
@@ -259,6 +263,40 @@ function getWidgets(node) {
   return { aspectWidget, resWidget };
 }
 
+function officialOnlyWidget(node) {
+  return node.widgets?.find((w) => w.name === "official_only");
+}
+
+function isOfficialOnly(node) {
+  const widget = officialOnlyWidget(node);
+  if (!widget) return false;
+  return Boolean(widgetValue(node, widget) ?? widget.value);
+}
+
+function sizeForLabel(config, aspectRatio, value) {
+  const parsed = parseSize(value);
+  if (parsed) return parsed;
+  const rows = rowsFor(config, aspectRatio);
+  const row = rows[tierIndexForValue(config, aspectRatio, value)] ?? rows[0];
+  return { w: row[0], h: row[1] };
+}
+
+function nearestOption(options, target) {
+  if (!target) return options[0];
+  let best = options[0];
+  let bestDelta = Infinity;
+  for (const opt of options) {
+    const size = parseSize(opt);
+    if (!size) continue;
+    const delta = Math.abs(size.w * size.h - target.w * target.h);
+    if (delta < bestDelta) {
+      bestDelta = delta;
+      best = opt;
+    }
+  }
+  return best;
+}
+
 function widgetValue(node, widget) {
   if (!widget) return undefined;
 
@@ -291,17 +329,26 @@ function updateResolutionOptions(node, config, preferred = {}) {
   if (!aspectWidget || !resWidget) return;
 
   const aspectRatio = preferred.aspectRatio ?? aspectWidget.value ?? config.fallbackAspect;
-  const options = labelsFor(config, aspectRatio);
+  const officialOnly = preferred.officialOnly ?? isOfficialOnly(node);
+  const options = labelsFor(config, aspectRatio, officialOnly);
   const preferredResolution = preferred.resolution;
-  const tierIdx = tierIndexForValue(config, aspectRatio, preferredResolution ?? resWidget.value);
+  const currentValue = preferredResolution ?? resWidget.value;
+
+  let nextValue;
+  if (preferredResolution && options.includes(preferredResolution)) {
+    nextValue = preferredResolution;
+  } else if (currentValue && options.includes(currentValue)) {
+    nextValue = currentValue;
+  } else {
+    // Map across lists (aspect change, or official_only toggle) by nearest area
+    // so the equivalent tier / bucket stays selected.
+    nextValue = nearestOption(options, sizeForLabel(config, aspectRatio, currentValue)) ?? options[0];
+  }
 
   aspectWidget.value = aspectRatio;
   resWidget.options = resWidget.options ?? {};
   resWidget.options.values = options;
-  resWidget.value =
-    preferredResolution && options.includes(preferredResolution)
-      ? preferredResolution
-      : (options[tierIdx] ?? options[0]);
+  resWidget.value = nextValue;
 
   syncWidgetValues(node);
   node.setDirtyCanvas(true, true);
@@ -338,6 +385,15 @@ app.registerExtension({
       orig?.call(node, value);
       updateResolutionOptions(node, config, { aspectRatio: value });
     };
+
+    const officialWidget = officialOnlyWidget(node);
+    if (officialWidget) {
+      const origOfficial = officialWidget.callback;
+      officialWidget.callback = (value) => {
+        origOfficial?.call(node, value);
+        updateResolutionOptions(node, config, { officialOnly: Boolean(value) });
+      };
+    }
 
     const onExecuted = node.onExecuted;
     node.onExecuted = function (output) {
