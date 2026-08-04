@@ -5,6 +5,7 @@ from wanresolutions import (
     LTX_UPSCALER_POWER_CHOICES,
     LTXResolutions,
     LTXUpscalerPower,
+    MiniMaxH3Resolutions,
     WanResolutions,
 )
 
@@ -138,15 +139,20 @@ class LTXUpscalerPowerTests(unittest.TestCase):
         )
 
     def test_official_labels_are_accepted_by_validation(self):
-        # The dropdown swaps to these labels, so the backend combo must accept them.
-        valid = set(WanResolutions.INPUT_TYPES()["required"]["resolution"][0])
+        # The frontend swaps these into the dropdown. Custom validation accepts
+        # them without requiring the backend combo to expose a full union.
         for label in (
             "Official 480P — 832×480",
             "Official 720P — 1280×720",
             "Official 480P — 480×832",
             "Official 720P — 720×1280",
         ):
-            self.assertIn(label, valid)
+            self.assertTrue(WanResolutions.VALIDATE_INPUTS(resolution=label))
+
+    def test_backend_combo_is_seeded_with_only_the_default_aspect(self):
+        choices = WanResolutions.INPUT_TYPES()["required"]["resolution"][0]
+        self.assertEqual(choices, WanResolutions._labels_for("1:1"))
+        self.assertNotIn("Wan 2.2 Native — 1280×720", choices)
 
     def test_official_label_round_trips(self):
         node = WanResolutions()
@@ -160,10 +166,10 @@ class LTXUpscalerPowerTests(unittest.TestCase):
         )
 
     def test_validate_inputs_accepts_legacy_or_unknown_labels(self):
-        # Old preset labels are no longer in the combo union; VALIDATE_INPUTS must
+        # Old preset labels are no longer in the seeded combo; VALIDATE_INPUTS must
         # let them through so headless/API replays of old workflows still run.
-        union = set(WanResolutions.INPUT_TYPES()["required"]["resolution"][0])
-        self.assertNotIn("Fast Samples — 480×480", union)
+        choices = set(WanResolutions.INPUT_TYPES()["required"]["resolution"][0])
+        self.assertNotIn("Fast Samples — 480×480", choices)
         self.assertTrue(WanResolutions.VALIDATE_INPUTS(resolution="Fast Samples — 480×480"))
         self.assertTrue(WanResolutions.VALIDATE_INPUTS(resolution="literally anything"))
 
@@ -176,6 +182,68 @@ class LTXUpscalerPowerTests(unittest.TestCase):
         ]:
             w, h = WanResolutions().pick(ar, label)
             self.assertEqual((w % 16, h % 16), (0, 0), msg=f"{ar} {label} -> {w}x{h}")
+
+
+class MiniMaxH3ResolutionTests(unittest.TestCase):
+    class Image:
+        shape = (1, 641, 1000, 3)
+
+    def test_t2v_uses_official_h3_aspect_ratios(self):
+        self.assertEqual(
+            MiniMaxH3Resolutions.ASPECT_ORDER,
+            ("1:1", "3:4", "4:3", "9:16", "16:9", "21:9"),
+        )
+        self.assertEqual(
+            MiniMaxH3Resolutions.INPUT_TYPES()["required"]["aspect_ratio"][1]["default"],
+            "16:9",
+        )
+
+    def test_backend_combo_does_not_expose_the_full_resolution_union(self):
+        choices = MiniMaxH3Resolutions.INPUT_TYPES()["required"]["resolution"][0]
+        self.assertEqual(choices, MiniMaxH3Resolutions._labels_for("16:9"))
+        self.assertEqual(len(choices), 6)
+        self.assertNotIn("2K (2.25 MP) — 1536×1536", choices)
+
+    def test_each_t2v_aspect_has_six_div32_buckets(self):
+        for aspect_ratio, rows in MiniMaxH3Resolutions.PRESETS.items():
+            self.assertEqual(len(rows), 6, msg=aspect_ratio)
+            for width, height, _note in rows:
+                self.assertEqual(
+                    (width % 32, height % 32),
+                    (0, 0),
+                    msg=f"{aspect_ratio}: {width}x{height}",
+                )
+
+    def test_landscape_1k_and_2k_anchors(self):
+        node = MiniMaxH3Resolutions()
+        self.assertEqual(node.pick("16:9", "1K (0.56 MP) — 1024×576"), (1024, 576))
+        self.assertEqual(node.pick("16:9", "2K (2.25 MP) — 2048×1152"), (2048, 1152))
+
+    def test_i2v_preserves_source_ratio_with_smart_area_sizing(self):
+        output = MiniMaxH3Resolutions().pick(
+            "1:1",
+            "2K (2.25 MP) — 1536×1536",
+            image=self.Image(),
+        )
+
+        self.assertEqual(output["result"], (1920, 1216))
+        self.assertEqual(output["result"][0] % 32, 0)
+        self.assertEqual(output["result"][1] % 32, 0)
+        source_ratio = 1000 / 641
+        output_ratio = output["result"][0] / output["result"][1]
+        self.assertLess(abs(output_ratio - source_ratio), 0.02)
+
+    def test_i2v_reports_nearest_official_aspect_without_snapping_output_to_it(self):
+        output = MiniMaxH3Resolutions().pick(
+            "1:1",
+            "Preview (0.40 MP) — 640×640",
+            image=self.Image(),
+        )
+
+        state = output["ui"]["aspect_resolution_state"][0]
+        self.assertEqual(state["aspect_ratio"], "16:9")
+        self.assertEqual((state["source_width"], state["source_height"]), (1000, 641))
+        self.assertEqual(output["result"], (800, 512))
 
 
 if __name__ == "__main__":

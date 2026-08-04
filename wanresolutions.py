@@ -1,3 +1,4 @@
+import math
 import re
 from fractions import Fraction
 from typing import Dict, List, Optional, Tuple
@@ -66,32 +67,19 @@ class AspectResolutionNodeBase:
         return int(m.group(1)), int(m.group(2))
 
     @classmethod
-    def _all_labels_for_validation(cls) -> List[str]:
-        # Union across all aspect ratios so backend validation never rejects.
-        # Official-bucket labels are included so the UI may swap to them when
-        # `official_only` is enabled.
-        seen = set()
-        out = []
-        for ar in cls.ASPECT_ORDER:
-            labels = cls._labels_for(ar) + cls._legacy_labels_for(ar)
-            if cls.ALLOW_OFFICIAL_ONLY:
-                labels = labels + cls._official_labels_for(ar)
-            for label in labels:
-                if label not in seen:
-                    seen.add(label)
-                    out.append(label)
-        return out
-
-    @classmethod
     def INPUT_TYPES(cls):
         aspect_choices = list(cls.ASPECT_ORDER)
         default_ar = cls.FALLBACK_ASPECT
-        all_resolution_choices = cls._all_labels_for_validation()
+        # Seed the combo with only the default aspect's resolutions. The frontend
+        # swaps this list when the aspect changes, while VALIDATE_INPUTS accepts
+        # saved/API labels from every aspect. Returning the full union here causes
+        # an unfiltered list to flash—or remain visible if custom JS loads late.
+        resolution_choices = cls._labels_for(default_ar)
         default_res = cls._labels_for(default_ar)[0]
 
         required = {
             "aspect_ratio": (aspect_choices, {"default": default_ar}),
-            "resolution": (all_resolution_choices, {"default": default_res}),
+            "resolution": (resolution_choices, {"default": default_res}),
         }
         if cls.ALLOW_OFFICIAL_ONLY:
             required["official_only"] = ("BOOLEAN", {"default": False})
@@ -428,6 +416,143 @@ class WanResolutions(AspectResolutionNodeBase):
             (1280, 720, "Wan 2.2 Native"),
         ],
     }
+
+
+class MiniMaxH3Resolutions(AspectResolutionNodeBase):
+    """
+    MiniMax H3 resolution presets.
+
+    Text-to-video uses MiniMax's six official aspect-ratio choices. Connecting
+    an image switches to adaptive image-to-video sizing: the selected tier's
+    pixel area is retained while the source image's aspect ratio is preserved.
+    Every output is aligned to H3's 32-pixel transformer grid.
+    """
+
+    CATEGORY = "MINIMAX"
+    FALLBACK_ASPECT = "16:9"
+    ASPECT_ORDER = ("1:1", "3:4", "4:3", "9:16", "16:9", "21:9")
+
+    # These areas give a useful local-generation ladder while retaining familiar
+    # 1K / 1.5K / 2K landscape anchors. They are also used for adaptive I2V.
+    TARGET_PIXELS = (
+        512 * 512,
+        int(0.40 * 1024 * 1024),
+        1024 * 576,
+        1344 * 768,
+        1536 * 864,
+        2048 * 1152,
+    )
+
+    PRESETS: Dict[str, List[Tuple[int, int, str]]] = {
+        "1:1": [
+            (512, 512, "Draft (0.25 MP)"),
+            (640, 640, "Preview (0.40 MP)"),
+            (768, 768, "1K (0.56 MP)"),
+            (1024, 1024, "High Detail (1.00 MP)"),
+            (1152, 1152, "1.5K (1.27 MP)"),
+            (1536, 1536, "2K (2.25 MP)"),
+        ],
+        "3:4": [
+            (448, 576, "Draft (0.25 MP)"),
+            (576, 736, "Preview (0.40 MP)"),
+            (672, 896, "1K (0.56 MP)"),
+            (864, 1184, "High Detail (1.00 MP)"),
+            (992, 1344, "1.5K (1.27 MP)"),
+            (1344, 1760, "2K (2.25 MP)"),
+        ],
+        "4:3": [
+            (576, 448, "Draft (0.25 MP)"),
+            (736, 576, "Preview (0.40 MP)"),
+            (896, 672, "1K (0.56 MP)"),
+            (1184, 864, "High Detail (1.00 MP)"),
+            (1344, 992, "1.5K (1.27 MP)"),
+            (1760, 1344, "2K (2.25 MP)"),
+        ],
+        "9:16": [
+            (384, 672, "Draft (0.25 MP)"),
+            (480, 864, "Preview (0.40 MP)"),
+            (576, 1024, "1K (0.56 MP)"),
+            (768, 1344, "High Detail (1.00 MP)"),
+            (864, 1536, "1.5K (1.27 MP)"),
+            (1152, 2048, "2K (2.25 MP)"),
+        ],
+        "16:9": [
+            (672, 384, "Draft (0.25 MP)"),
+            (864, 480, "Preview (0.40 MP)"),
+            (1024, 576, "1K (0.56 MP)"),
+            (1344, 768, "High Detail (1.00 MP)"),
+            (1536, 864, "1.5K (1.27 MP)"),
+            (2048, 1152, "2K (2.25 MP)"),
+        ],
+        "21:9": [
+            (768, 320, "Draft (0.25 MP)"),
+            (992, 416, "Preview (0.40 MP)"),
+            (1184, 512, "1K (0.56 MP)"),
+            (1536, 672, "High Detail (1.00 MP)"),
+            (1760, 768, "1.5K (1.27 MP)"),
+            (2336, 992, "2K (2.25 MP)"),
+        ],
+    }
+
+    @staticmethod
+    def _adaptive_size(width: int, height: int, target_pixels: int) -> Tuple[int, int]:
+        if width <= 0 or height <= 0:
+            return (32, 32)
+
+        ratio = float(width) / float(height)
+        ideal_width = math.sqrt(float(target_pixels) * ratio)
+        ideal_height = math.sqrt(float(target_pixels) / ratio)
+        return (
+            max(32, round(ideal_width / 32) * 32),
+            max(32, round(ideal_height / 32) * 32),
+        )
+
+    def pick(
+        self,
+        aspect_ratio: str,
+        resolution: str,
+        image=None,
+        official_only: bool = False,
+        image_bypass: bool = False,
+        upscaler_power: str = "none",
+    ):
+        image_dims = self._image_dimensions(image)
+        if image_dims is None:
+            return super().pick(
+                aspect_ratio,
+                resolution,
+                image=None,
+                official_only=official_only,
+                image_bypass=image_bypass,
+                upscaler_power=upscaler_power,
+            )
+
+        image_w, image_h = image_dims
+        tier_index = self._tier_index_for_value(aspect_ratio, resolution)
+        parsed_size = self._parse_size(resolution)
+        if tier_index is None:
+            target_pixels = (
+                parsed_size[0] * parsed_size[1]
+                if parsed_size is not None
+                else self.TARGET_PIXELS[0]
+            )
+            tier_index = 0
+        else:
+            target_pixels = self.TARGET_PIXELS[tier_index]
+
+        width, height = self._adaptive_size(image_w, image_h, target_pixels)
+        resolved_aspect = self._best_aspect_ratio(image_w, image_h)
+        resolved_resolution = self._labels_for(resolved_aspect)[tier_index]
+        state = {
+            "aspect_ratio": resolved_aspect,
+            "resolution": resolved_resolution,
+            "source_width": image_w,
+            "source_height": image_h,
+        }
+        return {
+            "ui": {key: [state] for key in self.UI_STATE_KEYS},
+            "result": (int(width), int(height)),
+        }
 
 
 class LTXResolutions(AspectResolutionNodeBase):

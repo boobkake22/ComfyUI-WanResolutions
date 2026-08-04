@@ -1,13 +1,20 @@
-from .wanresolutions import LTXResolutions, LTXUpscalerPower, WanResolutions
+from .wanresolutions import (
+    LTXResolutions,
+    LTXUpscalerPower,
+    MiniMaxH3Resolutions,
+    WanResolutions,
+)
 
 NODE_CLASS_MAPPINGS = {
     "WanResolutions": WanResolutions,
+    "MiniMaxH3Resolutions": MiniMaxH3Resolutions,
     "LTXResolutions": LTXResolutions,
     "LTXUpscalerPower": LTXUpscalerPower,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "WanResolutions": "WanResolutions",
+    "MiniMaxH3Resolutions": "MiniMax H3 Resolutions",
     "LTXResolutions": "LTXResolutions",
     "LTXUpscalerPower": "LTX Upscaler Power",
 }
