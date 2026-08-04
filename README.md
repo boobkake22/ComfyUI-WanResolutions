@@ -30,12 +30,12 @@ ComfyUI custom nodes that output `width` and `height` presets for Wan 2.2, MiniM
 ### `MiniMax H3 Resolutions`
 
 - Uses MiniMax H3's official T2V aspect ratios: `21:9`, `16:9`, `4:3`, `1:1`, `3:4`, and `9:16`
-- Provides six useful area buckets: `0.25 MP`, `0.40 MP`, `1K`, `1 MP`, `1.5K`, and `2K`
+- Provides eight useful area buckets: `0.25 MP`, `0.40 MP`, `1K`, `0.90 MP` (720p class), `1 MP`, `1.5K`, `2.00 MP` (1080p class), and `2K`
 - Includes the official ComfyUI fast-preview anchor (`16:9` at `0.40 MP` → `864×480`) and base-quality anchor (`16:9` near `1 MP` → `1344×768`)
 - Uses dimensions divisible by `32`, matching H3's effective transformer grid
 - Without an `IMAGE`, outputs the selected T2V aspect-ratio preset
 - With an `IMAGE`, switches to adaptive I2V sizing: it preserves the source image's ratio, targets the selected bucket's pixel area, and rounds both dimensions to the nearest multiple of `32`
-- The `1K`, `1.5K`, and `2K` names use familiar `16:9` anchors; other ratios receive an area-equivalent size
+- At `16:9`, the `0.90 MP` and `2.00 MP` buckets produce the H3-legal neighbors `1280×736` and `1920×1088`; other ratios receive area-equivalent sizes
 
 ### `LTX Upscaler Power`
 

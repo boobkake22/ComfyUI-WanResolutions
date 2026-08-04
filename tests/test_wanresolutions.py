@@ -201,12 +201,12 @@ class MiniMaxH3ResolutionTests(unittest.TestCase):
     def test_backend_combo_does_not_expose_the_full_resolution_union(self):
         choices = MiniMaxH3Resolutions.INPUT_TYPES()["required"]["resolution"][0]
         self.assertEqual(choices, MiniMaxH3Resolutions._labels_for("16:9"))
-        self.assertEqual(len(choices), 6)
+        self.assertEqual(len(choices), 8)
         self.assertNotIn("2K (2.25 MP) — 1536×1536", choices)
 
-    def test_each_t2v_aspect_has_six_div32_buckets(self):
+    def test_each_t2v_aspect_has_eight_div32_buckets(self):
         for aspect_ratio, rows in MiniMaxH3Resolutions.PRESETS.items():
-            self.assertEqual(len(rows), 6, msg=aspect_ratio)
+            self.assertEqual(len(rows), 8, msg=aspect_ratio)
             for width, height, _note in rows:
                 self.assertEqual(
                     (width % 32, height % 32),
@@ -218,6 +218,17 @@ class MiniMaxH3ResolutionTests(unittest.TestCase):
         node = MiniMaxH3Resolutions()
         self.assertEqual(node.pick("16:9", "1K (0.56 MP) — 1024×576"), (1024, 576))
         self.assertEqual(node.pick("16:9", "2K (2.25 MP) — 2048×1152"), (2048, 1152))
+
+    def test_landscape_720p_and_1080p_neighbors(self):
+        node = MiniMaxH3Resolutions()
+        self.assertEqual(
+            node.pick("16:9", "720P Class (0.90 MP) — 1280×736"),
+            (1280, 736),
+        )
+        self.assertEqual(
+            node.pick("16:9", "1080P Class (2.00 MP) — 1920×1088"),
+            (1920, 1088),
+        )
 
     def test_i2v_preserves_source_ratio_with_smart_area_sizing(self):
         output = MiniMaxH3Resolutions().pick(
@@ -232,6 +243,23 @@ class MiniMaxH3ResolutionTests(unittest.TestCase):
         source_ratio = 1000 / 641
         output_ratio = output["result"][0] / output["result"][1]
         self.assertLess(abs(output_ratio - source_ratio), 0.02)
+
+    def test_i2v_uses_new_720p_and_1080p_target_areas(self):
+        node = MiniMaxH3Resolutions()
+        image = self.Image()
+        output_720p = node.pick(
+            "16:9",
+            "720P Class (0.90 MP) — 1280×736",
+            image=image,
+        )
+        output_1080p = node.pick(
+            "16:9",
+            "1080P Class (2.00 MP) — 1920×1088",
+            image=image,
+        )
+
+        self.assertEqual(output_720p["result"], (1216, 768))
+        self.assertEqual(output_1080p["result"], (1824, 1152))
 
     def test_i2v_reports_nearest_official_aspect_without_snapping_output_to_it(self):
         output = MiniMaxH3Resolutions().pick(
